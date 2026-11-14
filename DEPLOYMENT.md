@@ -1,0 +1,89 @@
+# Deployment
+
+## Local Mock
+
+Create `.env` with mode `600` from `.env.example`, keep `APP_ENV=development` and `APP_MODE=mock`, then run:
+
+```sh
+docker compose -f compose.dev.yaml up --build
+```
+
+The web UI is available on `http://localhost:3000`. Mock data is labeled and cannot invoke host system actions.
+
+## Production prerequisites
+
+- Ubuntu host and Docker/Compose versions verified on the target machine.
+- A `vMAJOR.MINOR.PATCH` tag passes CI and publishes web/API/read-only Agent images for `linux/amd64` and `linux/arm64` to GHCR.
+- The tagged CI summary records the multi-platform digest for each image. Production Compose pins all three images by digest; the release tag remains a readable label.
+- The Ubuntu host is authenticated to the private GHCR packages with a token limited to `read:packages`.
+- Cloudflare Access passkeys added under **Zero Trust → Integrations → Identity providers** and allowed under the application's **Login methods**; issuer/audience configured in the API. Enroll after verifying with an existing method. Keep Access policies email-based because passkeys do not supply IdP group attributes. See [Cloudflare Passkeys setup](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/passkeys/).
+- The API limits each verified Access subject to 120 requests per minute. This in-memory limit is per API process; keep one replica. Login attempts occur at Cloudflare Access and need provider-side protections.
+- `HOST_AGENT_TOKEN` generated with `openssl rand -hex 32`; the same value is used by the API and read-only Agent.
+- Optional Portainer read access: HTTPS URL, API key belonging to a read-only Portainer user, and endpoint ID. To enable only container start/stop/restart, set a separate `PORTAINER_ACTIONS_API_KEY` for a dedicated least-privilege Portainer identity. Only production Live mode, Owner/Operator roles, a current valid container state, and a one-time WebAuthn grant scoped to that operation and container ID can use it. Leaving this key unset keeps Docker actions disabled.
+- Optional automation health: set `N8N_URL` and/or `OPENCLAW_URL` to HTTPS origins reachable from the API, or the fixed internal service URLs `http://n8n:5678` and `http://openclaw:18789`. The API sends unauthenticated `GET /healthz/readiness` to n8n and `GET /health` to OpenClaw with a two-second timeout; keep those endpoints on a private route. n8n readiness returns HTTP 200 only after its database is connected and migrated ([n8n monitoring](https://github.com/n8n-io/n8n-docs/blob/main/docs/deploy/host-n8n/keep-n8n-running/monitor-n8n.md)); OpenClaw `/health` checks Gateway liveness, not channel health ([OpenClaw health checks](https://docs.openclaw.ai/health)). To read up to five recent n8n execution metadata rows, also set `N8N_API_KEY`; use only `execution:list` scope on Enterprise, since non-Enterprise API keys have full account access. Requests exclude execution payloads and have a 2-second timeout and 256 KiB response cap. Service restarts and MCP health are not connected.
+- Optional Netdata alerts: set `NETDATA_URL` to a private HTTPS origin reachable from the API or the fixed internal URL `http://netdata:19999`. The adapter uses the Agent's `POST /api/v3/alerts` endpoint for current WARNING/CRITICAL instances only, caps results at 100, and rejects responses above 256 KiB; it never invokes management or configuration endpoints. Set `NETDATA_API_TOKEN` only when bearer protection is enabled on that Agent. Netdata documents the direct Agent v3 alert endpoint and optional bearer protection in its [Agent alert API guide](https://github.com/netdata/netdata/blob/master/docs/netdata-ai/skills/query-netdata-agents/query-alerts.md) and [REST API reference](https://learn.netdata.cloud/api).
+- Optional Scrutiny storage health: set `SCRUTINY_URL` to a private HTTPS origin reachable from the API or to `http://scrutiny:8080` on the same private Docker network. The adapter reads only `GET /api/summary`, limits the response to 256 KiB and 100 disks, and returns device status, label/model, capacity, temperature, and power-on hours; serials, WWN, raw SMART attributes, and temperature history stay hidden. Scrutiny's collector needs device pass-through and `SYS_RAWIO` (NVMe may also need `SYS_ADMIN`); configure that separately in Scrutiny and review its host access before enabling collection ([Scrutiny project](https://github.com/analogj/scrutiny), [summary API model](https://github.com/AnalogJ/scrutiny/blob/v0.9.5/webapp/backend/pkg/models/device_summary.go)). This dashboard only reads its summary. Uptime Kuma remains unconnected because its read API is not a stable supported contract.
+- Optional mailcow read-only access: HTTPS origin, read-only API key, and an IP allowlist entry for the host's outbound address. Set `MAILCOW_URL` and `MAILCOW_API_KEY`; only Owner and Operator can view domains, mailboxes, aliases, and quota usage.
+- Optional database metrics: set `POSTGRES_URL` and/or `REDIS_URL` in `.env`. PostgreSQL requires `sslmode=verify-full`; the adapter forces TLS hostname verification and disables GSS encryption. Set `sslrootcert=system` to trust the API image's system CA store, or provide `sslrootcert=/path` for a trusted CA file available inside the API container. Use a PostgreSQL account with only `CONNECT` on the target database; reads use one fixed query in a read-only transaction. See PostgreSQL's [libpq SSL configuration](https://www.postgresql.org/docs/current/libpq-ssl.html). Redis uses `PING`, the `memory`, `clients`, and `stats` sections of `INFO`, and `DBSIZE` for the database selected in `REDIS_URL`; create a dedicated ACL user with exactly `+PING +INFO +DBSIZE +SELECT` (`INFO` is categorized as dangerous, and redis-py selects the URL database when connecting). Keep database credentials only in the API environment. Remote Redis URLs must use TLS (`rediss://`); plaintext `redis://` is accepted only for the Docker service hostname `redis` or loopback (`localhost`, `127.0.0.1`, `::1`). The dashboard has no SQL console, backup, or restore operation.
+- Optional ntfy delivery: set `NTFY_URL`, `NTFY_TOPIC`, and, for a protected topic, `NTFY_TOKEN`. Use HTTPS for remote ntfy; plain HTTP is accepted only for a service at `ntfy:80` on the private Docker network. If anonymous publishing is enabled, use a long random topic name; preferably grant a dedicated ntfy identity publish access to one topic. The Live API checks configured host/container/automation health once per minute and posts only alert or recovery transitions. See the official [ntfy publishing and topic guidance](https://docs.ntfy.sh/publish/).
+- Optional storage capacity: identify the actual SSD/HDD filesystems with `lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS` and `findmnt` first. Set both `HOST_SSD_PATH` and `HOST_HDD_PATH` to existing, non-sensitive files on distinct filesystems. `infra/compose-prod.sh` verifies both files and selects `compose.storage.prod.yaml`; the overlay mounts only those files read-only, not their containing directories. The Agent calls `statvfs` and mount metadata only. The mounted file remains accessible to the Agent process, so choose files safe for that process to read if compromised. Leave both unset to disable storage collection; do not create or modify files on the existing HDD for this feature.
+- Optional GitHub Actions history: fine-grained token with `Actions: read` for only the required repositories; set `GITHUB_REPOSITORIES=owner/repo`. The API requests the latest five workflow runs per repository. This does not deploy images.
+- Optional Cloudflare DNS: set `CLOUDFLARE_API_TOKEN` and the 32-character `CLOUDFLARE_ZONE_ID`; scope the read token to `DNS Read` for that one zone. To enable writes, configure a different `CLOUDFLARE_DNS_WRITE_TOKEN` scoped to `DNS Write` on the same zone and `CLOUDFLARE_ZONE_NAME`. Writes support A, AAAA, CNAME, TXT, and MX create/update/delete, require Owner authorization plus a one-use Passkey grant bound to the entire change, compare the current record before update/delete, and save before/after values in audit history. The domains page shows MX/SPF/DKIM/DMARC warnings and offers a separately reauthenticated revert for successful changes. Other record types remain read-only. Do not configure the write token unless required. See Cloudflare's [Create DNS Record](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/create/), [Update DNS Record](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/edit/), [Delete DNS Record](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/delete/), and [API token permissions](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
+- Cloudflare Tunnel route points only to the web service. The API has no host-published port.
+- The API audit database uses the named `homeserver-admin-api-data` volume. If moving it to a bind mount, first verify the target SSD path; do not select the existing HDD data directory until its mount and contents are inspected.
+- `AUDIT_RETENTION_DAYS` defaults to 365. API startup removes older audit events and completed jobs; back up existing history before deploying or shortening this period.
+- `TUNNEL_NETWORK` names the existing Docker network used by the Cloudflare Tunnel container. Attach the Tunnel to the `web` service on port 3000; the API has no published port.
+- Tailscale SSH tested before any deployment.
+
+On the Ubuntu host, clone the repository and create `.env` without overwriting an existing file:
+
+```sh
+if [ ! -e .env ]; then (umask 077 && cp .env.example .env); fi
+chmod 600 .env
+```
+
+Set `WEB_ORIGIN`, Access issuer/AUD, owner emails, tunnel network, `HOST_AGENT_TOKEN`, the release `IMAGE_TAG`, and all three digest values from that tag's successful GitHub Actions summary. Authenticate to GHCR, validate with `infra/compose-prod.sh config -q`, then deploy with `infra/deploy.sh`. The helper rejects missing or malformed digests. Compose pulls the exact API, web, and Agent manifest digests before replacing containers, waits for health checks, and prints service status.
+
+Before any account can register its first dashboard Passkey, generate a separate temporary token with `openssl rand -hex 32`, set it as `WEBAUTHN_BOOTSTRAP_TOKEN` in `.env`, and recreate only the API with `infra/compose-prod.sh up -d --no-deps api`. Give the token only to the intended Access-authorized account owner. After that account enrolls in **Security & Audit**, clear the variable and recreate the API again. Repeat with a new token for each account that needs its first Passkey. The token is not stored by the web app; subsequent additions and removals require fresh Passkey verification. Keep Cloudflare Access as the login and authorization gate.
+
+```sh
+openssl rand -hex 32
+read -rsp 'GHCR read:packages token: ' GHCR_TOKEN; echo
+printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+unset GHCR_TOKEN
+infra/compose-prod.sh config -q
+infra/deploy.sh
+```
+
+Copy the generated 64-character token into `.env` as `HOST_AGENT_TOKEN`. Keep the previous release tag and its three digests from the corresponding CI summary. Roll back with `infra/rollback.sh v1.0.0 sha256:<api-digest> sha256:<web-digest> sha256:<agent-digest>`; the command validates all digests before pulling or replacing containers. Both scripts expect a reviewed `.env`; neither changes Cloudflare or existing host services.
+
+The Agent reads `/proc/stat`, `/proc/cpuinfo`, `/proc/meminfo`, `/proc/loadavg`, `/proc/uptime`, `/proc/net/dev`, `/etc/hostname`, and `/etc/os-release`, all mounted read-only. It also mounts `/sys/class/hwmon` and `/sys/devices` read-only because hwmon entries are symlinks into the device tree. Its code reads only supported `coretemp`, `k10temp`, `zenpower`, `nvidia`, `nouveau`, `amdgpu`, and `i915` names and `temp*_input` values. It reports CPU temperatures and a GPU driver label/temperature when available; it does not identify the GPU model. Sensor support and calibration depend on the host kernel driver. The Agent reports OS identity, the shared host kernel version, CPU identity/topology and usage, memory, swap, load, uptime, and network rates. When the optional storage overlay is enabled, it uses `statvfs` on one configured file per filesystem and container mount metadata to report capacity, filesystem, and device without mounting whole data directories. The Agent runs as UID `10002`; parent directories need traversal permission. It does not read or modify probe file contents, change permissions, report S.M.A.R.T health, or manage containers or systemd services.
+
+Portainer's read key makes bounded container-list, image-list, stack-list, selected-container stats, and log requests. Overview and the services page use the same container list; a container counts as healthy only when Portainer reports an explicit healthy Healthcheck. Running containers without reported Healthchecks show a warning. The Images page lists local image tags and size. The Compose Stacks page filters the Portainer stack list to the configured endpoint and shows active/inactive status without exposing Compose environment values or file contents. The selected-container detail requests a bounded `stats?stream=false` sample with a 3-second timeout and 256 KiB body limit. While the detail is open, the browser polls Live stats every 10 seconds and retains at most 24 samples in memory for the CPU/memory trend; it does not persist history or turn Mock samples into a trend. The open log viewer polls the most recent 200 lines every three seconds, capped at 1 MiB; log requests are restricted to a validated container ID on the configured endpoint, with follow/streaming disabled. Docker may not return logs when a container uses a logging driver other than `json-file` or `journald`. The optional `PORTAINER_ACTIONS_API_KEY` is a separate write credential used only for fixed start/stop/restart requests; the API rechecks container ID and state, consumes a target-bound 60-second WebAuthn grant, and records succeeded or failed results. Portainer tokens inherit the user's permissions, so use a dedicated least-privilege identity. Only Owner and Operator roles can read Live logs and invoke these actions. Container output may contain application secrets; do not print credentials in container logs. See [Portainer API access](https://docs.portainer.io/api/access), [Portainer API usage examples](https://docs.portainer.io/portainer-documentation/sts/api/examples), [Docker Engine API](https://docs.docker.com/reference/api/engine/version/v1.51/), and [Portainer Docker proxy reference](https://github.com/portainer/portainer-skills/blob/main/portainer-api/references/docker-proxy.md).
+
+The optional mailcow provider reads domain, mailbox, and alias inventory with bounded `GET` requests. Create a mailcow `ro` API key, configure its IP allowlist for the server's outbound address, and keep the key only in the API environment. The dashboard does not expose mailcow write operations. See the [mailcow API specification](https://github.com/mailcow/mailcow-dockerized/blob/master/data/web/api/openapi.yaml).
+
+The optional PostgreSQL and Redis adapters show database size, current/max connections, memory, clients, selected-database key count, and operation rate. PostgreSQL reads `pg_database_size` and `pg_stat_database.numbackends` in a transaction explicitly marked read-only. Redis sends `PING`, three section-specific `INFO` requests (`memory`, `clients`, and `stats`), and `DBSIZE` for the database selected in `REDIS_URL`. See PostgreSQL [`pg_database_size`](https://www.postgresql.org/docs/current/functions-admin.html) and Redis [`INFO`](https://redis.io/docs/latest/commands/info/) and [`DBSIZE`](https://redis.io/docs/latest/commands/dbsize/) documentation.
+
+## Audit database backup and restore
+
+The API SQLite database stores audit/job history and WebAuthn credential public keys, account bindings, and pending challenges. It contains no Passkey private keys. Treat backups as sensitive and store them in a private directory before upgrades and restores. The SQLite backup API makes a consistent snapshot while the API is running:
+
+```sh
+install -d -m 700 /var/backups/homeserver-admin
+infra/backup.sh /var/backups/homeserver-admin/audit-$(date -u +%Y%m%dT%H%M%SZ).sqlite3
+```
+
+Restore overwrites audit history and removes Passkey credentials, challenges, and grants from the restored snapshot so deleted credentials cannot be revived. After recovery, use a temporary `WEBAUTHN_BOOTSTRAP_TOKEN` and enroll Passkeys again. The restore script requires `--confirm`, verifies the SQLite backup, creates a pre-restore snapshot, stops only the API, restores the database, and waits for the API health check:
+
+```sh
+infra/restore.sh --confirm /var/backups/homeserver-admin/audit-YYYYMMDDTHHMMSSZ.sqlite3
+```
+
+Use `infra/compose-prod.sh ps` and inspect the API health before considering recovery complete. Restore commands cannot be validated until a Linux Docker host and a real backup exist.
+
+This project does not change DNS, Access policies, Tunnel routes, existing services, or disk mounts automatically. Verify the existing Tunnel network and route before deploying.
+
+## Recovery
+
+Keep the prior image tag, all three image digests, and an audit database backup before upgrades. Use `infra/rollback.sh` only after confirming the previous release's digests and `docker compose ps`. Rollback changes running containers only; update `IMAGE_TAG` and all three digest values in `.env` to the same previous release before a later `infra/deploy.sh`. Recover through Tailscale SSH if the web service is unavailable.

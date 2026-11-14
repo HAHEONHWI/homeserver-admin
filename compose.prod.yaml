@@ -1,0 +1,118 @@
+services:
+  api:
+    image: ${GHCR_NAMESPACE:-ghcr.io/haheonhwi/homeserver-admin}-api:${IMAGE_TAG:?Set IMAGE_TAG in .env}@${API_IMAGE_DIGEST:?Set API_IMAGE_DIGEST in .env}
+    environment:
+      APP_ENV: production
+      APP_MODE: live
+      APP_DATA_DIR: /data
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
+      WEB_ORIGIN: ${WEB_ORIGIN:?Set WEB_ORIGIN in .env}
+      WEBAUTHN_BOOTSTRAP_TOKEN: ${WEBAUTHN_BOOTSTRAP_TOKEN:-}
+      CF_ACCESS_ISSUER: ${CF_ACCESS_ISSUER:?Set CF_ACCESS_ISSUER in .env}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:?Set CF_ACCESS_AUD in .env}
+      CF_ACCESS_JWKS_URL: ${CF_ACCESS_JWKS_URL:-}
+      OWNER_EMAILS: ${OWNER_EMAILS:?Set OWNER_EMAILS in .env}
+      OPERATOR_EMAILS: ${OPERATOR_EMAILS:-}
+      HOST_AGENT_URL: http://agent:9000/v1/metrics
+      HOST_AGENT_TOKEN: ${HOST_AGENT_TOKEN:?Generate HOST_AGENT_TOKEN in .env}
+      PORTAINER_URL: ${PORTAINER_URL:-}
+      PORTAINER_API_KEY: ${PORTAINER_API_KEY:-}
+      PORTAINER_ACTIONS_API_KEY: ${PORTAINER_ACTIONS_API_KEY:-}
+      PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-0}
+      N8N_URL: ${N8N_URL:-}
+      N8N_API_KEY: ${N8N_API_KEY:-}
+      OPENCLAW_URL: ${OPENCLAW_URL:-}
+      NETDATA_URL: ${NETDATA_URL:-}
+      NETDATA_API_TOKEN: ${NETDATA_API_TOKEN:-}
+      SCRUTINY_URL: ${SCRUTINY_URL:-}
+      MAILCOW_URL: ${MAILCOW_URL:-}
+      MAILCOW_API_KEY: ${MAILCOW_API_KEY:-}
+      POSTGRES_URL: ${POSTGRES_URL:-}
+      REDIS_URL: ${REDIS_URL:-}
+      NTFY_URL: ${NTFY_URL:-}
+      NTFY_TOPIC: ${NTFY_TOPIC:-}
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
+      GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}
+      GITHUB_REPOSITORIES: ${GITHUB_REPOSITORIES:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_DNS_WRITE_TOKEN: ${CLOUDFLARE_DNS_WRITE_TOKEN:-}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
+      CLOUDFLARE_ZONE_NAME: ${CLOUDFLARE_ZONE_NAME:-}
+    volumes:
+      - api-data:/data
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    networks: [backend, agent-private]
+
+  agent:
+    image: ${GHCR_NAMESPACE:-ghcr.io/haheonhwi/homeserver-admin}-agent:${IMAGE_TAG:?Set IMAGE_TAG in .env}@${AGENT_IMAGE_DIGEST:?Set AGENT_IMAGE_DIGEST in .env}
+    environment:
+      AGENT_TOKEN: ${HOST_AGENT_TOKEN:?Generate HOST_AGENT_TOKEN in .env}
+    volumes:
+      - /proc/stat:/host/stat:ro
+      - /proc/meminfo:/host/meminfo:ro
+      - /proc/loadavg:/host/loadavg:ro
+      - /proc/uptime:/host/uptime:ro
+      - /proc/net/dev:/host/net-dev:ro
+      - /proc/cpuinfo:/host/cpuinfo:ro
+      - /etc/os-release:/host/os-release:ro
+      - /etc/hostname:/host/hostname:ro
+      - /sys/class/hwmon:/host/sys/class/hwmon:ro
+      - /sys/devices:/host/sys/devices:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    networks: [agent-private]
+
+  web:
+    image: ${GHCR_NAMESPACE:-ghcr.io/haheonhwi/homeserver-admin}-web:${IMAGE_TAG:?Set IMAGE_TAG in .env}@${WEB_IMAGE_DIGEST:?Set WEB_IMAGE_DIGEST in .env}
+    environment:
+      API_INTERNAL_URL: http://api:8000
+      WEB_ORIGIN: ${WEB_ORIGIN:?Set WEB_ORIGIN in .env}
+    depends_on:
+      api:
+        condition: service_healthy
+    expose:
+      - "3000"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [edge, backend]
+
+volumes:
+  api-data:
+    name: homeserver-admin-api-data
+
+networks:
+  edge:
+    name: ${TUNNEL_NETWORK:-cloudflared}
+    external: true
+  backend:
+    driver: bridge
+  agent-private:
+    driver: bridge
+    internal: true

@@ -1,0 +1,20 @@
+services:
+  agent:
+    environment:
+      HOST_SSD_PROBE_PATH: ${HOST_SSD_PATH:?Set HOST_SSD_PATH after verifying the filesystem}
+      HOST_HDD_PROBE_PATH: ${HOST_HDD_PATH:?Set HOST_HDD_PATH after verifying the filesystem}
+      HOST_SSD_MOUNT_LABEL: ${HOST_SSD_MOUNT_LABEL:?Set by infra/compose-prod.sh}
+      HOST_HDD_MOUNT_LABEL: ${HOST_HDD_MOUNT_LABEL:?Set by infra/compose-prod.sh}
+    volumes:
+      - type: bind
+        source: ${HOST_SSD_PATH:?Set HOST_SSD_PATH after verifying the mount}
+        target: /host/storage/ssd-probe
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_HDD_PATH:?Set HOST_HDD_PATH after verifying the mount}
+        target: /host/storage/hdd-probe
+        read_only: true
+        bind:
+          create_host_path: false

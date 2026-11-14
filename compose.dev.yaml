@@ -1,0 +1,52 @@
+services:
+  api:
+    build: ./apps/api
+    environment:
+      APP_ENV: development
+      APP_MODE: mock
+      APP_DATA_DIR: /data
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
+      WEB_ORIGIN: http://localhost:3000
+    volumes:
+      - api-data:/data
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [backend]
+
+  web:
+    build: ./apps/web
+    environment:
+      API_INTERNAL_URL: http://api:8000
+      WEB_ORIGIN: http://localhost:3000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+volumes:
+  api-data:
+
+networks:
+  backend:
+    driver: bridge

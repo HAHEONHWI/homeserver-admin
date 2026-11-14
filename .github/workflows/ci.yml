@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.14.10"
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+      - run: uv sync --locked --group dev
+        working-directory: apps/api
+      - run: uv run pytest
+        working-directory: apps/api
+      - run: uv run ruff check app tests
+        working-directory: apps/api
+      - run: python3 -m unittest discover -s apps/agent/tests -v
+      - run: python3 -m unittest discover -s infra/tests -v
+      - run: npm ci
+        working-directory: apps/web
+      - run: npm run lint
+        working-directory: apps/web
+      - run: npm run typecheck
+        working-directory: apps/web
+      - run: npm run build
+        working-directory: apps/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: npm run test:e2e
+        working-directory: apps/web
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: docker compose -f compose.dev.yaml config -q
+      - run: docker compose -f compose.prod.yaml config -q
+        env:
+          CF_ACCESS_ISSUER: https://team.cloudflareaccess.com
+          CF_ACCESS_AUD: ci-audience
+          OWNER_EMAILS: owner@example.com
+          WEB_ORIGIN: https://admin.example.com
+          IMAGE_TAG: v1.0.0
+          API_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
+          WEB_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
+          AGENT_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
+          HOST_AGENT_TOKEN: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      - run: |
+          touch "$HOST_SSD_PATH" "$HOST_HDD_PATH"
+          docker compose -f compose.prod.yaml -f compose.storage.prod.yaml config -q
+        env:
+          CF_ACCESS_ISSUER: https://team.cloudflareaccess.com
+          CF_ACCESS_AUD: ci-audience
+          OWNER_EMAILS: owner@example.com
+          WEB_ORIGIN: https://admin.example.com
+          IMAGE_TAG: v1.0.0
+          API_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
+          WEB_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
+          AGENT_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
+          HOST_AGENT_TOKEN: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          HOST_SSD_PATH: /tmp/hs-admin-ssd-probe
+          HOST_HDD_PATH: /tmp/hs-admin-hdd-probe
+          HOST_SSD_MOUNT_LABEL: /
+          HOST_HDD_MOUNT_LABEL: /mnt/hdd
+
+  amd64-sandybridge:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: sudo apt-get update && sudo apt-get install --yes qemu-user-static
+      - name: Build linux/amd64 images
+        run: |
+          docker build --platform linux/amd64 --target build --tag homeserver-web:cpu-check ./apps/web
+          docker build --platform linux/amd64 --tag homeserver-api:cpu-check ./apps/api
+      - name: Smoke-test native binaries without AVX2
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          check_image() {
+            local image="$1" container="$2" rootfs
+            shift 2
+            rootfs="$(mktemp -d)"
+            docker create --name "$container" "$image" >/dev/null
+            docker export "$container" | sudo tar --numeric-owner -xf - -C "$rootfs"
+            docker rm "$container" >/dev/null
+            sudo install -m 0755 /usr/bin/qemu-x86_64-static "$rootfs/qemu-x86_64-static"
+            sudo chroot "$rootfs" /qemu-x86_64-static -cpu SandyBridge "$@"
+            sudo rm -rf -- "$rootfs"
+          }
+
+          check_image homeserver-web:cpu-check hs-web-cpu /usr/local/bin/node -e 'const { transformSync } = require("/app/node_modules/next/dist/build/swc"); const result = transformSync("const answer: number = 42", { filename: "cpu-check.ts", jsc: { parser: { syntax: "typescript" } } }); if (!result.code.includes("answer")) process.exit(1);'
+          check_image homeserver-api:cpu-check hs-api-cpu /usr/local/bin/python -c 'import asyncio, cffi, cryptography, httptools, pydantic_core, uvloop, watchfiles, yaml; from cryptography.hazmat.primitives.ciphers.aead import AESGCM; key = bytes(range(32)); nonce = bytes(range(12)); payload = b"sandybridge"; encrypted = AESGCM(key).encrypt(nonce, payload, None); assert AESGCM(key).decrypt(nonce, encrypted, None) == payload; loop = uvloop.new_event_loop(); loop.run_until_complete(asyncio.sleep(0)); loop.close(); assert yaml.safe_load("value: 42")["value"] == 42'
+
+  publish-images:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [web, compose-config, amd64-sandybridge]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: API image metadata
+        id: api-meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ghcr.io/haheonhwi/homeserver-admin-api
+          tags: |
+            type=ref,event=tag
+            type=sha,format=long
+      - name: Build and publish API
+        id: api-image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: ./apps/api
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.api-meta.outputs.tags }}
+          labels: ${{ steps.api-meta.outputs.labels }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Web image metadata
+        id: web-meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ghcr.io/haheonhwi/homeserver-admin-web
+          tags: |
+            type=ref,event=tag
+            type=sha,format=long
+      - name: Build and publish web
+        id: web-image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: ./apps/web
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.web-meta.outputs.tags }}
+          labels: ${{ steps.web-meta.outputs.labels }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+      - name: Agent image metadata
+        id: agent-meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ghcr.io/haheonhwi/homeserver-admin-agent
+          tags: |
+            type=ref,event=tag
+            type=sha,format=long
+      - name: Build and publish read-only agent
+        id: agent-image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: ./apps/agent
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.agent-meta.outputs.tags }}
+          labels: ${{ steps.agent-meta.outputs.labels }}
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
+      - name: Record immutable image digests
+        env:
+          API_IMAGE_DIGEST: ${{ steps.api-image.outputs.digest }}
+          WEB_IMAGE_DIGEST: ${{ steps.web-image.outputs.digest }}
+          AGENT_IMAGE_DIGEST: ${{ steps.agent-image.outputs.digest }}
+        run: |
+          {
+            printf '## Immutable image digests\n\n'
+            printf 'Copy these values to the deployment `.env` file.\n\n'
+            printf '```dotenv\n'
+            printf 'IMAGE_TAG=%s\n' "$GITHUB_REF_NAME"
+            printf 'API_IMAGE_DIGEST=%s\n' "$API_IMAGE_DIGEST"
+            printf 'WEB_IMAGE_DIGEST=%s\n' "$WEB_IMAGE_DIGEST"
+            printf 'AGENT_IMAGE_DIGEST=%s\n' "$AGENT_IMAGE_DIGEST"
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
