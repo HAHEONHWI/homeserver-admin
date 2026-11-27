@@ -10,6 +10,6 @@ if [[ ! -f .env ]]; then
 fi
 
 infra/compose-prod.sh config -q
-infra/compose-prod.sh pull api web agent
+infra/compose-prod.sh pull api agent
 infra/compose-prod.sh up -d --wait
 infra/compose-prod.sh ps

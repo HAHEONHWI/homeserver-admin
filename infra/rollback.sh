@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if [[ $# -ne 4 || ! "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
-  echo "Usage: infra/rollback.sh vMAJOR.MINOR.PATCH API_DIGEST WEB_DIGEST AGENT_DIGEST" >&2
+if [[ $# -ne 3 || ! "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+  echo "Usage: infra/rollback.sh vMAJOR.MINOR.PATCH API_DIGEST AGENT_DIGEST" >&2
   exit 2
 fi
 for digest in "${@:2}"; do
@@ -21,6 +21,6 @@ if [[ ! -f .env ]]; then
 fi
 
 infra/compose-prod.sh config -q
-IMAGE_TAG="$1" API_IMAGE_DIGEST="$2" WEB_IMAGE_DIGEST="$3" AGENT_IMAGE_DIGEST="$4" infra/compose-prod.sh pull api web agent
-IMAGE_TAG="$1" API_IMAGE_DIGEST="$2" WEB_IMAGE_DIGEST="$3" AGENT_IMAGE_DIGEST="$4" infra/compose-prod.sh up -d --wait
+IMAGE_TAG="$1" API_IMAGE_DIGEST="$2" AGENT_IMAGE_DIGEST="$3" infra/compose-prod.sh pull api agent
+IMAGE_TAG="$1" API_IMAGE_DIGEST="$2" AGENT_IMAGE_DIGEST="$3" infra/compose-prod.sh up -d --wait
 infra/compose-prod.sh ps

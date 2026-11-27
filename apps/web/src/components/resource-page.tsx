@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { AlertCircle, ArrowDown, ArrowUp, Database, HardDrive, RefreshCw, Search, Settings2, Shield, Unplug } from "lucide-react";
 import Link from "next/link";
+import { isPcOffline } from "@/lib/api";
 import { useResourceQuery } from "@/lib/queries";
 import { findNavItem } from "@/lib/resources";
 import { ActionDialog } from "@/components/action-dialog";
@@ -71,7 +72,10 @@ function ResourcePageContent({ resourceKey }: { resourceKey: string }) {
   const IntegrationIcon = unavailableIcon[resourceKey as keyof typeof unavailableIcon] ?? Unplug;
 
   if (query.isPending) return <div className="page-content"><div className="page-heading"><div><h1>{nav.label}</h1><p>{nav.subtitle}</p></div></div><div className="resource-grid" aria-busy="true"><div className="panel resource-summary"><div className="resource-summary__item skeleton" /><div className="resource-summary__item skeleton" /><div className="resource-summary__item skeleton" /><div className="resource-summary__item skeleton" /></div><div className="panel resource-table-panel skeleton" style={{ height: 210 }} /></div></div>;
-  if (query.isError) return <div className="page-content"><div className="page-heading"><div><h1>{nav.label}</h1><p>{nav.subtitle}</p></div><button className="button" onClick={() => query.refetch()}><RefreshCw size={14} />다시 연결</button></div><section className="state-card" role="alert"><span className="state-card__icon"><AlertCircle size={20} /></span><h2>정보를 불러올 수 없습니다</h2><p>{query.error.message}</p></section></div>;
+  if (query.isError) {
+    const offline = isPcOffline(query.error);
+    return <div className="page-content"><div className="page-heading"><div><h1>{nav.label}</h1><p>{nav.subtitle}</p></div><button className="button" onClick={() => query.refetch()}><RefreshCw size={14} />다시 연결</button></div><section className="state-card" role="alert"><span className="state-card__icon"><AlertCircle size={20} /></span><h2>{offline ? "PC 꺼짐" : "정보를 불러올 수 없습니다"}</h2><p>{offline ? "관리 API에 연결할 수 없습니다. 전원 제어는 계속 사용할 수 있습니다." : query.error.message}</p>{offline && <Link className="button button--primary" href="/power">전원 제어</Link>}</section></div>;
+  }
 
   const data = query.data;
   const isUnavailable = data.status === "not_configured" || data.status === "unavailable";

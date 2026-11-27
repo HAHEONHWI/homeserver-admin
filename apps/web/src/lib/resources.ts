@@ -1,6 +1,6 @@
 import {
   Activity, Archive, Bell, Bot, Boxes, Database, Globe2, HardDrive, Layers, Package,
-  LayoutDashboard, Mail, Settings2, Shield, Server,
+  LayoutDashboard, Mail, Power, Settings2, Shield, Server,
   type LucideIcon,
 } from "lucide-react";
 
@@ -9,6 +9,7 @@ export type NavGroup = { label: string; items: NavItem[] };
 
 export const navGroups: NavGroup[] = [
   { label: "Overview", items: [{ key: "", label: "개요", icon: LayoutDashboard, subtitle: "서버 상태와 최근 운영 기록" }] },
+  { label: "전원", items: [{ key: "power", label: "전원", icon: Power, subtitle: "원격 전원과 PC 연결 상태" }] },
   { label: "관리", items: [
     { key: "services", label: "서비스", icon: Server, subtitle: "서비스 상태와 연결 정보" },
     { key: "notifications", label: "알림", icon: Bell, subtitle: "최근 알림과 운영 이벤트" },

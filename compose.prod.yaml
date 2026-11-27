@@ -53,7 +53,7 @@ services:
       interval: 15s
       timeout: 3s
       retries: 5
-    networks: [backend, agent-private]
+    networks: [edge, backend, agent-private]
 
   agent:
     image: ${GHCR_NAMESPACE:-ghcr.io/haheonhwi/homeserver-admin}-agent:${IMAGE_TAG:?Set IMAGE_TAG in .env}@${AGENT_IMAGE_DIGEST:?Set AGENT_IMAGE_DIGEST in .env}
@@ -80,28 +80,6 @@ services:
       timeout: 3s
       retries: 5
     networks: [agent-private]
-
-  web:
-    image: ${GHCR_NAMESPACE:-ghcr.io/haheonhwi/homeserver-admin}-web:${IMAGE_TAG:?Set IMAGE_TAG in .env}@${WEB_IMAGE_DIGEST:?Set WEB_IMAGE_DIGEST in .env}
-    environment:
-      API_INTERNAL_URL: http://api:8000
-      WEB_ORIGIN: ${WEB_ORIGIN:?Set WEB_ORIGIN in .env}
-    depends_on:
-      api:
-        condition: service_healthy
-    expose:
-      - "3000"
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-    networks: [edge, backend]
 
 volumes:
   api-data:

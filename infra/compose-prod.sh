@@ -23,7 +23,7 @@ if [[ ! "$image_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
   echo "IMAGE_TAG must be a version tag such as v1.2.3." >&2
   exit 2
 fi
-for name in API_IMAGE_DIGEST WEB_IMAGE_DIGEST AGENT_IMAGE_DIGEST; do
+for name in API_IMAGE_DIGEST AGENT_IMAGE_DIGEST; do
   digest="$(read_setting "$name")"
   if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     echo "$name must be a sha256 image digest from the tagged CI build." >&2

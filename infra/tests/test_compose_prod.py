@@ -20,7 +20,6 @@ class ComposeProdTests(unittest.TestCase):
         self.image_settings = (
             "IMAGE_TAG=v1.0.0\n"
             f"API_IMAGE_DIGEST=sha256:{'0' * 64}\n"
-            f"WEB_IMAGE_DIGEST=sha256:{'0' * 64}\n"
             f"AGENT_IMAGE_DIGEST=sha256:{'0' * 64}\n"
         )
         self.env_file.write_text(self.image_settings)
@@ -102,7 +101,6 @@ class ComposeProdTests(unittest.TestCase):
         self.env_file.write_text(
             "IMAGE_TAG=v1.0.0\n"
             "API_IMAGE_DIGEST=latest\n"
-            f"WEB_IMAGE_DIGEST=sha256:{'0' * 64}\n"
             f"AGENT_IMAGE_DIGEST=sha256:{'0' * 64}\n"
         )
 
@@ -116,7 +114,6 @@ class ComposeProdTests(unittest.TestCase):
         self.env_file.write_text(
             "IMAGE_TAG=latest\n"
             f"API_IMAGE_DIGEST=sha256:{'0' * 64}\n"
-            f"WEB_IMAGE_DIGEST=sha256:{'0' * 64}\n"
             f"AGENT_IMAGE_DIGEST=sha256:{'0' * 64}\n"
         )
 

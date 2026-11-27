@@ -1,6 +1,8 @@
 .env
 .env.*
 !.env.example
+!.env.vercel.example
+firmware/esp32-power/config.h
 node_modules/
 .next/
 out/

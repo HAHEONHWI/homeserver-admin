@@ -21,7 +21,6 @@ class RestoreTests(unittest.TestCase):
         (self.root / ".env").write_text(
             f"IMAGE_TAG=v1.0.0\n"
             f"API_IMAGE_DIGEST={digest}\n"
-            f"WEB_IMAGE_DIGEST={digest}\n"
             f"AGENT_IMAGE_DIGEST={digest}\n"
         )
         (infra / "backup.sh").write_text("#!/bin/sh\nexit 0\n")
