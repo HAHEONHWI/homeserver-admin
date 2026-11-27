@@ -340,6 +340,16 @@ class Settings(BaseSettings):
             )
         ):
             raise ValueError("Cloudflare DNS write config requires a valid token and Zone name")
+        if self.cf_access_aud.strip():
+            audiences = [part.strip() for part in self.cf_access_aud.split(",")]
+            if (
+                any(not part for part in audiences)
+                or len(audiences) > 4
+                or any(not re.fullmatch(r"[A-Za-z0-9._-]{1,200}", part) for part in audiences)
+            ):
+                raise ValueError(
+                    "CF_ACCESS_AUD must list 1 to 4 Access application audience tags"
+                )
         if self.app_mode == "live":
             if not self.cf_access_issuer or not self.cf_access_aud:
                 raise ValueError("Live mode requires CF_ACCESS_ISSUER and CF_ACCESS_AUD")
@@ -363,6 +373,10 @@ class Settings(BaseSettings):
                 ):
                     raise ValueError("CF_ACCESS_JWKS_URL must use the configured Access issuer")
         return self
+
+    @property
+    def access_audiences(self) -> list[str]:
+        return [item.strip() for item in self.cf_access_aud.split(",") if item.strip()]
 
     @property
     def jwks_url(self) -> str:

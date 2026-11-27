@@ -36,6 +36,8 @@ jobs:
         working-directory: apps/web
       - run: npm run typecheck
         working-directory: apps/web
+      - run: npm test
+        working-directory: apps/web
       - run: npm run build
         working-directory: apps/web
       - run: npx playwright install --with-deps chromium
@@ -56,7 +58,6 @@ jobs:
           WEB_ORIGIN: https://admin.example.com
           IMAGE_TAG: v1.0.0
           API_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
-          WEB_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
           AGENT_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
           HOST_AGENT_TOKEN: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       - run: |
@@ -69,7 +70,6 @@ jobs:
           WEB_ORIGIN: https://admin.example.com
           IMAGE_TAG: v1.0.0
           API_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
-          WEB_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
           AGENT_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
           HOST_AGENT_TOKEN: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           HOST_SSD_PATH: /tmp/hs-admin-ssd-probe
@@ -141,25 +141,6 @@ jobs:
           labels: ${{ steps.api-meta.outputs.labels }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
-      - name: Web image metadata
-        id: web-meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ghcr.io/haheonhwi/homeserver-admin-web
-          tags: |
-            type=ref,event=tag
-            type=sha,format=long
-      - name: Build and publish web
-        id: web-image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: ./apps/web
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.web-meta.outputs.tags }}
-          labels: ${{ steps.web-meta.outputs.labels }}
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,mode=max,scope=web
       - name: Agent image metadata
         id: agent-meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
@@ -182,16 +163,14 @@ jobs:
       - name: Record immutable image digests
         env:
           API_IMAGE_DIGEST: ${{ steps.api-image.outputs.digest }}
-          WEB_IMAGE_DIGEST: ${{ steps.web-image.outputs.digest }}
           AGENT_IMAGE_DIGEST: ${{ steps.agent-image.outputs.digest }}
         run: |
           {
             printf '## Immutable image digests\n\n'
-            printf 'Copy these values to the deployment `.env` file.\n\n'
+            printf 'Copy these values to the home-server deployment `.env` file. The web app is deployed on Vercel, not from GHCR.\n\n'
             printf '```dotenv\n'
             printf 'IMAGE_TAG=%s\n' "$GITHUB_REF_NAME"
             printf 'API_IMAGE_DIGEST=%s\n' "$API_IMAGE_DIGEST"
-            printf 'WEB_IMAGE_DIGEST=%s\n' "$WEB_IMAGE_DIGEST"
             printf 'AGENT_IMAGE_DIGEST=%s\n' "$AGENT_IMAGE_DIGEST"
             printf '```\n'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -30,9 +30,15 @@ def jwks_client(url: str) -> PyJWKClient:
     return PyJWKClient(url, cache_jwk_set=True, lifespan=3600, timeout=3)
 
 
+def access_assertion(request: Request) -> str | None:
+    if "x-hs-user-access-jwt" in request.headers:
+        return request.headers.get("x-hs-user-access-jwt", "").strip() or None
+    return request.headers.get("cf-access-jwt-assertion", "").strip() or None
+
+
 def current_identity(request: Request) -> Identity:
     settings: Settings = request.app.state.settings
-    token = request.headers.get("cf-access-jwt-assertion")
+    token = access_assertion(request)
     if not token and settings.app_env == "development" and settings.app_mode == "mock":
         return Identity("local-development", "local@development.invalid", "owner")
     if not token:
@@ -44,7 +50,7 @@ def current_identity(request: Request) -> Identity:
             key,
             algorithms=["RS256"],
             issuer=settings.cf_access_issuer,
-            audience=settings.cf_access_aud,
+            audience=settings.access_audiences,
             options={"require": ["exp", "iss", "aud", "sub"]},
             leeway=30,
         )

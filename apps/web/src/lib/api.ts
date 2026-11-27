@@ -16,6 +16,19 @@ import {
   type DnsRecordChange,
 } from "@/lib/contracts";
 
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export const isPcOffline = (error: unknown): error is ApiError =>
+  error instanceof ApiError && (error.status === 502 || error.status === 504);
+
 async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/${path}`, {
     ...init,
@@ -26,7 +39,8 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
 
   if (!response.ok) {
     const detail = z.object({ detail: z.string().optional(), error: z.string().optional() }).safeParse(body);
-    throw new Error(detail.success ? detail.data.detail ?? detail.data.error ?? `API ${response.status}` : `API ${response.status}`);
+    const message = detail.success ? detail.data.detail ?? detail.data.error ?? `API ${response.status}` : `API ${response.status}`;
+    throw new ApiError(response.status, message);
   }
 
   if (response.status === 204) return undefined as T;

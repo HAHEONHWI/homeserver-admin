@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ContainerLogsSchema, OverviewSchema } from "@/lib/contracts";
-import { getContainerLogs, getContainerStats, getJobs, getOverview, getResource } from "@/lib/api";
+import { getContainerLogs, getContainerStats, getJobs, getOverview, getResource, isPcOffline } from "@/lib/api";
+import { getPowerStatus } from "@/lib/power-client";
 
 function usePageVisible() {
   const [visible, setVisible] = useState(true);
@@ -21,6 +22,7 @@ export function useOverviewQuery() {
   const query = useQuery({
     queryKey: ["overview"],
     queryFn: ({ signal }) => getOverview(signal),
+    retry: (count, error) => isPcOffline(error) ? false : count < 3,
     refetchInterval: (current) => current.state.data?.mode === "live" && current.state.data.status !== "not_configured" && !streamConnected ? 10_000 : false,
   });
   useEffect(() => {
@@ -45,6 +47,7 @@ export function useResourceQuery(key: string) {
   return useQuery({
     queryKey: ["resource", key],
     queryFn: ({ signal }) => getResource(key, signal),
+    retry: (count, error) => isPcOffline(error) ? false : count < 3,
     refetchInterval: (query) => query.state.data?.mode === "live" && query.state.data.status !== "not_configured" ? 30_000 : false,
   });
 }
@@ -89,6 +92,15 @@ export function useContainerStatsQuery(containerId: string, enabled: boolean) {
     enabled,
     refetchInterval: (query) => enabled && query.state.data?.mode === "live" && query.state.data.status === "connected" ? 10_000 : false,
     refetchIntervalInBackground: false,
+  });
+}
+
+export function usePowerStatusQuery() {
+  return useQuery({
+    queryKey: ["power-status"],
+    queryFn: ({ signal }) => getPowerStatus(signal),
+    refetchInterval: 5_000,
+    retry: false,
   });
 }
 

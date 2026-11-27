@@ -18,28 +18,79 @@ const allowed = (method: string, path: string[]) =>
     "v1/webauthn/passkeys/delete",
   ].includes(path.join("/"))));
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+function resolveUpstream(): { url: URL; remote: boolean } {
+  const remote = process.env.API_UPSTREAM_URL?.trim();
+  if (remote) {
+    const url = new URL(remote);
+    if (
+      url.protocol !== "https:"
+      || url.username
+      || url.password
+      || url.port
+      || url.search
+      || url.hash
+      || (url.pathname !== "/" && url.pathname !== "")
+      || ["localhost", "127.0.0.1", "::1"].includes(url.hostname)
+    ) throw new Error("upstream");
+    return { url, remote: true };
+  }
+  const internal = new URL(process.env.API_INTERNAL_URL ?? "");
+  if (
+    internal.protocol !== "http:"
+    || !["api", "127.0.0.1", "localhost"].includes(internal.hostname)
+    || internal.port !== "8000"
+    || internal.username
+    || internal.password
+    || internal.pathname !== "/"
+    || internal.search
+    || internal.hash
+  ) throw new Error("upstream");
+  return { url: internal, remote: false };
+}
+
+function applyAccessHeaders(request: NextRequest, headers: Headers, remote: boolean) {
+  const assertion = request.headers.get("cf-access-jwt-assertion") || request.cookies.get("CF_Authorization")?.value;
+  if (assertion) {
+    headers.set("Cf-Access-Jwt-Assertion", assertion);
+    headers.set("X-HS-User-Access-Jwt", assertion);
+  }
+  if (!remote) return;
+  const id = process.env.CF_ACCESS_CLIENT_ID?.trim() ?? "";
+  const secret = process.env.CF_ACCESS_CLIENT_SECRET?.trim() ?? "";
+  if (!id || !secret || id.length > 200 || secret.length > 512 || /\s/.test(id) || /\s/.test(secret)) {
+    throw new Error("service-token");
+  }
+  headers.set("CF-Access-Client-Id", id);
+  headers.set("CF-Access-Client-Secret", secret);
+}
+
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
   if (!path.length || path.some((segment) => !/^[a-zA-Z0-9_-]{1,64}$/.test(segment)) || !allowed(request.method, path)) {
     return Response.json({ detail: "Not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
   }
 
-  let upstreamBase: URL;
+  let upstream: { url: URL; remote: boolean };
   try {
-    upstreamBase = new URL(process.env.API_INTERNAL_URL ?? "");
-    if (
-      upstreamBase.protocol !== "http:" ||
-      !["api", "127.0.0.1", "localhost"].includes(upstreamBase.hostname) ||
-      upstreamBase.port !== "8000"
-    ) throw new Error();
-    if (!(["http:", "https:"].includes(upstreamBase.protocol)) || upstreamBase.username || upstreamBase.password || upstreamBase.pathname !== "/" || upstreamBase.search || upstreamBase.hash) throw new Error();
-  } catch {
-    return Response.json({ detail: "API upstream is not configured" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    upstream = resolveUpstream();
+  } catch (error) {
+    const missingToken = error instanceof Error && error.message === "service-token";
+    return Response.json(
+      { detail: missingToken ? "API access service token is not configured" : "API upstream is not configured" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   const headers = new Headers({ Accept: streamPath(path) ? "text/event-stream" : "application/json" });
-  const assertion = request.headers.get("cf-access-jwt-assertion");
-  if (assertion) headers.set("Cf-Access-Jwt-Assertion", assertion);
+  try {
+    applyAccessHeaders(request, headers, upstream.remote);
+  } catch {
+    return Response.json({ detail: "API access service token is not configured" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
   if (request.method === "POST") {
     const origin = request.headers.get("origin");
     let expectedOrigin = new URL(request.url).origin;
@@ -64,13 +115,13 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     if (!body) return Response.json({ detail: "Request too large" }, { status: 413 });
     headers.set("Content-Type", "application/json");
     headers.set("X-HS-Origin-Verified", "1");
-    return forward(request, upstreamBase, path, headers, body);
+    return forward(request, upstream, path, headers, body);
   }
-  return forward(request, upstreamBase, path, headers);
+  return forward(request, upstream, path, headers);
 }
 
-async function forward(request: NextRequest, base: URL, path: string[], headers: Headers, body?: ArrayBuffer) {
-  const target = new URL(`api/${path.map(encodeURIComponent).join("/")}`, base);
+async function forward(request: NextRequest, upstream: { url: URL; remote: boolean }, path: string[], headers: Headers, body?: ArrayBuffer) {
+  const target = new URL(`api/${path.map(encodeURIComponent).join("/")}`, upstream.url);
   target.search = request.nextUrl.search;
   const streaming = streamPath(path);
   try {
@@ -79,6 +130,7 @@ async function forward(request: NextRequest, base: URL, path: string[], headers:
       headers,
       body,
       cache: "no-store",
+      redirect: "manual",
       signal: streaming ? request.signal : AbortSignal.any([request.signal, AbortSignal.timeout(12_000)]),
     });
     const outputHeaders = new Headers({ "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
@@ -86,7 +138,13 @@ async function forward(request: NextRequest, base: URL, path: string[], headers:
       outputHeaders.set("Cache-Control", "no-cache, no-transform");
       outputHeaders.set("X-Accel-Buffering", "no");
     }
+    if (response.status === 0 || (response.status >= 300 && response.status < 400)) {
+      return Response.json({ detail: "API access was rejected" }, { status: 502, headers: outputHeaders });
+    }
     const type = response.headers.get("content-type");
+    if (type?.includes("text/html")) {
+      return Response.json({ detail: "API access was rejected" }, { status: 502, headers: outputHeaders });
+    }
     if (type) outputHeaders.set("Content-Type", type);
     const length = Number(response.headers.get("content-length") ?? 0);
     const responseLimit = path[1] === "containers" && path[3] === "logs" ? 7_000_000 : 1_048_576;

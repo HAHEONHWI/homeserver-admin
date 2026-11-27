@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { PowerPage } from "@/components/power-page";
 import { ResourcePage } from "@/components/resource-page";
 import { findNavItem, resourceItems } from "@/lib/resources";
 
@@ -16,5 +17,6 @@ export async function generateMetadata({ params }: { params: Promise<{ section: 
 export default async function ResourceRoute({ params }: { params: Promise<{ section: string }> }) {
   const { section } = await params;
   if (!findNavItem(section) || section === "") notFound();
+  if (section === "power") return <PowerPage />;
   return <ResourcePage resourceKey={section} />;
 }

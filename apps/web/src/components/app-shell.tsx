@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ChevronRight, Command, HardDrive, Moon, Search, Sun, X } from "lucide-react";
 import { navGroups, navItems, type NavItem } from "@/lib/resources";
+import { isPcOffline } from "@/lib/api";
 import { useOverviewQuery } from "@/lib/queries";
 
 function ItemLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
@@ -42,7 +43,7 @@ function trapTab(event: ReactKeyboardEvent<HTMLElement>) {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { data } = useOverviewQuery();
+  const { data, isPending, isError, error } = useOverviewQuery();
   const [searchOpen, setSearchOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -59,7 +60,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     navItems.find((item) => item.key === "notifications"),
   ].filter((item): item is NavItem => item !== undefined).map((item) => item.key === "containers" ? { ...item, label: "Docker" } : item);
   const isMock = data?.mode === "mock";
-  const connectionLabel = !data ? "API 연결 확인 중" : isMock ? "DEMO 모드" : data.status === "connected" ? "Live 연결" : data.status === "unavailable" ? "에이전트 재연결 중" : "호스트 연결 대기";
+  const pcOffline = isError && isPcOffline(error);
+  const connectionLabel = isPending ? "API 연결 확인 중" : pcOffline ? "PC 꺼짐" : isError ? "관리 API 응답 없음" : !data ? "API 연결 확인 중" : isMock ? "DEMO 모드" : data.status === "connected" ? "Live 연결" : data.status === "unavailable" ? "에이전트 재연결 중" : "호스트 연결 대기";
   const closeSearch = useCallback(() => { setSearch(""); setSearchOpen(false); searchButtonRef.current?.focus(); }, []);
   const closeMore = useCallback(() => { setMoreOpen(false); moreButtonRef.current?.focus(); }, []);
 
@@ -117,7 +119,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="connection-mini">
           <i className="connection-mini__dot" aria-hidden="true" />
           <div><div className="connection-mini__title">{connectionLabel}</div>
-            <div className="connection-mini__detail">{data?.serverName ?? "연결 상태 확인 중"}</div></div>
+            <div className="connection-mini__detail">{pcOffline ? "전원 메뉴는 사용할 수 있습니다" : data?.serverName ?? "연결 상태 확인 중"}</div></div>
         </div>
       </div>
     </aside>

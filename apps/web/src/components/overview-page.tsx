@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import { Activity, Cpu, HardDrive, MemoryStick, RefreshCw, Server, ShieldAlert, type LucideIcon } from "lucide-react";
+import Link from "next/link";
+import { Activity, Cpu, HardDrive, MemoryStick, Power, RefreshCw, Server, ShieldAlert, type LucideIcon } from "lucide-react";
+import { isPcOffline } from "@/lib/api";
 import { useOverviewQuery } from "@/lib/queries";
 import { ActionDialog } from "@/components/action-dialog";
 import type { JobRequest } from "@/lib/contracts";
@@ -52,7 +54,10 @@ export function OverviewPage() {
   const query = useOverviewQuery();
   const [action, setAction] = useState<{ operation: JobRequest["operation"]; target: string; label: string; id: string; enabled: boolean; reason: string } | null>(null);
   if (query.isPending) return <div className="page-content"><LoadingState /></div>;
-  if (query.isError) return <div className="page-content"><div className="page-heading"><div><h1>개요</h1><p>서버 상태와 최근 운영 기록</p></div><button className="button" onClick={() => query.refetch()}><RefreshCw size={14} />다시 연결</button></div><section className="state-card" role="alert"><span className="state-card__icon"><ShieldAlert size={20} /></span><h2>API에 연결할 수 없습니다</h2><p>{query.error.message} · API 상태를 확인한 뒤 다시 시도하세요.</p></section></div>;
+  if (query.isError) {
+    const offline = isPcOffline(query.error);
+    return <div className="page-content"><div className="page-heading"><div><h1>개요</h1><p>서버 상태와 최근 운영 기록</p></div><button className="button" onClick={() => query.refetch()}><RefreshCw size={14} />다시 연결</button></div>{offline && <section className="state-banner" role="status"><Server size={14} /><span>PC가 꺼져 있거나 관리 API에 닿지 않습니다. 메트릭, Docker, DNS, 메일은 표시하지 않습니다.</span></section>}<section className="state-card" role="alert"><span className="state-card__icon">{offline ? <Power size={20} /> : <ShieldAlert size={20} />}</span><h2>{offline ? "PC 꺼짐" : "API에 연결할 수 없습니다"}</h2><p>{offline ? "전원 메뉴에서 원격으로 켤 수 있습니다. 다른 관리 기능은 PC가 켜진 뒤 다시 연결됩니다." : `${query.error.message} · API 상태를 확인한 뒤 다시 시도하세요.`}</p>{offline && <Link className="button button--primary" href="/power">전원 제어</Link>}</section></div>;
+  }
 
   const data = query.data;
   const mock = data.mode === "mock";

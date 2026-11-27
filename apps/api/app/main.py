@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app import passkeys
@@ -148,6 +149,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     application.add_middleware(RequestBodyLimitMiddleware, max_bytes=65_536)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins(config),
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Accept", "Content-Type", "Cf-Access-Jwt-Assertion", "X-HS-User-Access-Jwt"],
+        allow_credentials=False,
+        max_age=600,
+    )
     application.state.settings = config
     application.state.rate_limiter = RequestRateLimiter()
     application.state.stream_slots = asyncio.Semaphore(32)
@@ -685,6 +694,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Live host operation is blocked")
 
     return application
+
+
+def _cors_origins(config: Settings) -> list[str]:
+    if config.web_origin:
+        return [config.web_origin]
+    if config.app_env == "development":
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+    return []
 
 
 def _require_verified_origin(request: Request) -> None:

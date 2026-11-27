@@ -2262,6 +2262,72 @@ def test_live_access_assertion_checks_signature_issuer_and_audience(tmp_path, mo
     assert wrong_signature.status_code == 401
 
 
+def test_forwarded_user_jwt_must_match_one_configured_audience(tmp_path, monkeypatch):
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    class SigningKey:
+        key = private_key.public_key()
+
+    class LocalJwks:
+        def get_signing_key_from_jwt(self, _token):
+            return SigningKey()
+
+    monkeypatch.setattr(auth, "jwks_client", lambda _url: LocalJwks())
+    config = Settings(
+        app_env="production",
+        app_mode="live",
+        app_data_dir=tmp_path,
+        web_origin="https://admin.example.com",
+        cf_access_issuer="https://team.cloudflareaccess.com",
+        cf_access_aud="vercel-audience,api-audience",
+        owner_emails="owner@example.com",
+    )
+    assert config.access_audiences == ["vercel-audience", "api-audience"]
+    app = create_app(config)
+    now = int(time())
+
+    def token(audience):
+        return jwt.encode(
+            {
+                "iss": config.cf_access_issuer,
+                "aud": audience,
+                "sub": "owner-subject",
+                "email": "owner@example.com",
+                "exp": now + 120,
+            },
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "test-key"},
+        )
+
+    with TestClient(app) as client:
+        forwarded = client.get(
+            "/api/v1/metrics/overview",
+            headers={
+                "X-HS-User-Access-Jwt": token("vercel-audience"),
+                "Cf-Access-Jwt-Assertion": token("api-audience"),
+            },
+        )
+        rejected = client.get(
+            "/api/v1/metrics/overview",
+            headers={
+                "X-HS-User-Access-Jwt": token("unknown-audience"),
+                "Cf-Access-Jwt-Assertion": token("vercel-audience"),
+            },
+        )
+    assert forwarded.status_code == 200
+    assert rejected.status_code == 401
+    with pytest.raises(ValueError, match="audience tags"):
+        Settings(
+            app_env="production",
+            app_mode="live",
+            app_data_dir=tmp_path,
+            web_origin="https://admin.example.com",
+            cf_access_issuer="https://team.cloudflareaccess.com",
+            cf_access_aud="not an audience",
+        )
+
+
 def test_live_mode_never_accepts_host_job(tmp_path):
     config = Settings(
         app_env="production",
